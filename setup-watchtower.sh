@@ -113,7 +113,7 @@ update_or_add_containers() {
     if [[ -n "$new_containers" ]]; then
       updated_command=$(grep "^    command:" "$COMPOSE_FILE" | awk '{$1=""; print $0}')
       for container in $new_containers; do
-        updated_command="$updated_command --filter-name=$container"
+        updated_command="$updated_command $container"
       done
       sed -i "/^    command:/c\    command: $updated_command" "$COMPOSE_FILE"
       echo "已新增监控的容器：$new_containers"
@@ -136,9 +136,9 @@ update_or_add_containers() {
     fi
 
     if [[ -n "$containers" ]]; then
-      specific_command="--interval 300"
+      specific_command="containrrr/watchtower"
       for container in $containers; do
-        specific_command="$specific_command --filter-name=$container"
+        specific_command="$specific_command $container"
       done
       sed -i "/^    command:/c\    command: $specific_command" "$COMPOSE_FILE"
       echo "已覆盖监控的容器配置为：$containers"
