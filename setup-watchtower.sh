@@ -88,11 +88,32 @@ read_current_configuration() {
   fi
 }
 
+# 检测并移除同名容器（首次执行时）
+remove_existing_container() {
+  echo "检测是否有手动启动的 Watchtower 容器..."
+  if docker ps -a --format "{{.Names}}" | grep -qw "$SERVICE_NAME"; then
+    # 检查容器是否由 docker-compose 管理
+    is_compose_managed=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$SERVICE_NAME" 2>/dev/null)
+
+    if [[ -z "$is_compose_managed" ]]; then
+      echo "检测到同名容器 $SERVICE_NAME，为手动启动，正在停止并移除..."
+      docker stop "$SERVICE_NAME"
+      docker rm "$SERVICE_NAME"
+      echo "手动启动的 $SERVICE_NAME 容器已成功移除。"
+    else
+      echo "检测到同名容器 $SERVICE_NAME，由 docker-compose 管理，跳过移除操作。"
+    fi
+  else
+    echo "未检测到运行中的 $SERVICE_NAME 容器。"
+  fi
+}
+
 # 更新或新增监控容器
 update_or_add_containers() {
   echo "请选择操作："
   echo "1) 新增监控容器（保留现有配置）"
   echo "2) 覆盖监控容器（重新定义配置）"
+  echo "3) 恢复监控所有容器（需要用户确认）"
   read -r choice
 
   case $choice in
@@ -135,16 +156,22 @@ update_or_add_containers() {
       return
     fi
 
-    if [[ -n "$containers" ]]; then
-      specific_command="containrrr/watchtower"
-      for container in $containers; do
-        specific_command="$specific_command $container"
-      done
-      sed -i "/^    command:/c\    command: $specific_command" "$COMPOSE_FILE"
-      echo "已覆盖监控的容器配置为：$containers"
-    else
+    specific_command="$DEFAULT_COMMAND"
+    for container in $containers; do
+      specific_command="$specific_command $container"
+    done
+    sed -i "/^    command:/c\    command: $specific_command" "$COMPOSE_FILE"
+    echo "已覆盖监控的容器配置为：${containers:-所有容器}"
+    ;;
+  3)
+    # 恢复监控所有容器
+    echo "确认恢复为监控所有容器？这将覆盖现有配置。[y/N]"
+    read -r confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
       sed -i "/^    command:/c\    command: $DEFAULT_COMMAND" "$COMPOSE_FILE"
       echo "已恢复为默认监控所有容器。"
+    else
+      echo "操作已取消。"
     fi
     ;;
   *)
@@ -156,6 +183,7 @@ update_or_add_containers() {
 # 启动或重启 Watchtower 容器
 start_or_restart_watchtower() {
   echo "启动或重启 Watchtower 容器..."
+  remove_existing_container
   docker-compose -f "$COMPOSE_FILE" up -d
   echo "Watchtower 已启动或更新配置生效。"
 }
