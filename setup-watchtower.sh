@@ -17,8 +17,6 @@ install_docker() {
     systemctl start docker
     systemctl enable docker
     echo "Docker 已成功安装。"
-  else
-    echo "Docker 已安装。"
   fi
 }
 
@@ -29,15 +27,12 @@ install_docker_compose() {
     curl -L "https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
     chmod +x /usr/local/bin/docker-compose
     echo "Docker Compose $DOCKER_COMPOSE_VERSION 已成功安装。"
-  else
-    echo "Docker Compose 已安装。"
   fi
 }
 
 # 创建 Watchtower 目录
 create_watchtower_dir() {
   if [[ ! -d "$WATCHTOWER_DIR" ]]; then
-    echo "创建 Watchtower 文件夹：$WATCHTOWER_DIR"
     mkdir -p "$WATCHTOWER_DIR"
   fi
   cd "$WATCHTOWER_DIR" || exit
@@ -45,8 +40,8 @@ create_watchtower_dir() {
 
 # 创建 Docker Compose 文件
 create_compose_file() {
-  echo "创建默认 Docker Compose 配置文件..."
-  cat <<EOF >"$COMPOSE_FILE"
+  if [[ ! -f "$COMPOSE_FILE" ]]; then
+    cat <<EOF >"$COMPOSE_FILE"
 services:
   $SERVICE_NAME:
     image: containrrr/watchtower
@@ -58,12 +53,11 @@ services:
     command: $DEFAULT_COMMAND
     restart: unless-stopped
 EOF
-  echo "默认配置已保存到：$COMPOSE_FILE"
+  fi
 }
 
 # 列出当前所有容器
 list_all_containers() {
-  echo "当前 Docker 容器列表："
   docker ps -a --format "table {{.Names}}\t{{.Status}}"
 }
 
@@ -78,33 +72,16 @@ validate_container_names() {
   echo "${invalid_containers[@]}"
 }
 
-# 读取现有监控的配置
-read_current_configuration() {
-  if [[ -f "$COMPOSE_FILE" ]]; then
-    current_command=$(grep "^    command:" "$COMPOSE_FILE" | awk '{$1=""; print $0}')
-    echo "当前监控配置为：$current_command"
-  else
-    echo "未检测到现有配置。"
-  fi
-}
-
 # 检测并移除同名容器（首次执行时）
 remove_existing_container() {
-  echo "检测是否有手动启动的 Watchtower 容器..."
   if docker ps -a --format "{{.Names}}" | grep -qw "$SERVICE_NAME"; then
     # 检查容器是否由 docker-compose 管理
     is_compose_managed=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$SERVICE_NAME" 2>/dev/null)
 
     if [[ -z "$is_compose_managed" ]]; then
-      echo "检测到同名容器 $SERVICE_NAME，为手动启动，正在停止并移除..."
-      docker stop "$SERVICE_NAME"
-      docker rm "$SERVICE_NAME"
-      echo "手动启动的 $SERVICE_NAME 容器已成功移除。"
-    else
-      echo "检测到同名容器 $SERVICE_NAME，由 docker-compose 管理，跳过移除操作。"
+      docker stop "$SERVICE_NAME" &>/dev/null
+      docker rm "$SERVICE_NAME" &>/dev/null
     fi
-  else
-    echo "未检测到运行中的 $SERVICE_NAME 容器。"
   fi
 }
 
@@ -118,16 +95,13 @@ update_or_add_containers() {
 
   case $choice in
   1)
-    # 新增容器
     list_all_containers
     echo "请输入要新增监控的容器名称，多个容器用空格分隔："
     read -r new_containers
 
     invalid_containers=$(validate_container_names "$new_containers")
-
     if [[ -n "$invalid_containers" ]]; then
       echo "以下容器名称无效或不存在：$invalid_containers"
-      echo "请检查输入并重新运行脚本。"
       return
     fi
 
@@ -137,22 +111,16 @@ update_or_add_containers() {
         updated_command="$updated_command $container"
       done
       sed -i "/^    command:/c\    command: $updated_command" "$COMPOSE_FILE"
-      echo "已新增监控的容器：$new_containers"
-    else
-      echo "未新增任何容器，保持现有配置。"
     fi
     ;;
   2)
-    # 覆盖配置
     list_all_containers
     echo "请输入要监控的容器名称，多个容器用空格分隔（留空表示监控所有容器）："
     read -r containers
 
     invalid_containers=$(validate_container_names "$containers")
-
     if [[ -n "$invalid_containers" ]]; then
       echo "以下容器名称无效或不存在：$invalid_containers"
-      echo "请检查输入并重新运行脚本。"
       return
     fi
 
@@ -161,17 +129,12 @@ update_or_add_containers() {
       specific_command="$specific_command $container"
     done
     sed -i "/^    command:/c\    command: $specific_command" "$COMPOSE_FILE"
-    echo "已覆盖监控的容器配置为：${containers:-所有容器}"
     ;;
   3)
-    # 恢复监控所有容器
-    echo "确认恢复为监控所有容器？这将覆盖现有配置。[y/N]"
+    echo "确认恢复为监控所有容器？[y/N]"
     read -r confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
       sed -i "/^    command:/c\    command: $DEFAULT_COMMAND" "$COMPOSE_FILE"
-      echo "已恢复为默认监控所有容器。"
-    else
-      echo "操作已取消。"
     fi
     ;;
   *)
@@ -182,10 +145,8 @@ update_or_add_containers() {
 
 # 启动或重启 Watchtower 容器
 start_or_restart_watchtower() {
-  echo "启动或重启 Watchtower 容器..."
   remove_existing_container
-  docker-compose -f "$COMPOSE_FILE" up -d
-  echo "Watchtower 已启动或更新配置生效。"
+  docker-compose -f "$COMPOSE_FILE" up -d &>/dev/null
 }
 
 # 主流程
@@ -193,20 +154,7 @@ main() {
   install_docker
   install_docker_compose
   create_watchtower_dir
-
-  if [[ ! -f "$COMPOSE_FILE" ]]; then
-    echo "未检测到 Watchtower 配置文件，正在初始化默认配置..."
-    create_compose_file
-  else
-    echo "检测到现有 Watchtower 配置文件。"
-    read_current_configuration
-    echo "是否需要修改当前配置？[y/N]"
-    read -r modify
-    if [[ "$modify" =~ ^[Yy]$ ]]; then
-      update_or_add_containers
-    fi
-  fi
-
+  create_compose_file
   start_or_restart_watchtower
 }
 
