@@ -1,0 +1,17 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.log
+*.tmp
+/tmp/
+
+# 配置文件（避免上传敏感信息）
+/etc/vps_backup/config
+
+# 编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
